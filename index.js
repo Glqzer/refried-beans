@@ -17,9 +17,7 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message],
 });
 
-// messageId (either the DM question, or the public status message) -> record
 const pendingByMessageId = new Map();
-// targetUserId -> Set of records, just to know "do they have anything pending"
 const pendingByTargetUser = new Map();
 
 function addPending(record) {
@@ -48,8 +46,8 @@ function takePendingForDirectReply(targetId, referencedMessageId) {
   return record;
 }
 
-function formatMessage(question, status) {
-  return `**Question:** ${question}\n\n${status}`;
+function formatMessage(askerId, question, status) {
+  return `**<@${askerId}> said:** ${question}\n\n${status}`;
 }
 
 client.once('ready', () => {
@@ -66,22 +64,22 @@ client.on('interactionCreate', async (interaction) => {
     if (!question) {
       await interaction.reply({
         content:
-          "Missing the question option -- the command definition may be out of date. Try running `npm run deploy-commands` again, then wait a moment and retry.",
+          "Missing the message option -- the command definition may be out of date. Try running `npm run deploy-commands` again, then wait a moment and retry.",
         ephemeral: true,
       });
       return;
     }
 
-    // Public message that shows the question right away, and gets edited
+    // Public message that shows who said what right away, and gets edited
     // in place once the answer comes back.
-    await interaction.reply(formatMessage(question, '*Waiting for a reply...*'));
+    await interaction.reply(formatMessage(asker.id, question, '*thinking... give me a sec im a lil stupid...*'));
     const statusMessage = await interaction.fetchReply().catch(() => null);
 
     let target;
     try {
       target = await client.users.fetch(TARGET_USER_ID);
     } catch (err) {
-      await interaction.editReply(formatMessage(question, "*Couldn't reach the configured user -- check TARGET_USER_ID.*"));
+      await interaction.editReply(formatMessage(asker.id, question, "*Couldn't reach the configured user -- check TARGET_USER_ID.*"));
       return;
     }
 
@@ -90,7 +88,7 @@ client.on('interactionCreate', async (interaction) => {
       const dmChannel = await target.createDM();
       dmMessage = await dmChannel.send(question);
     } catch (err) {
-      await interaction.editReply(formatMessage(question, "*Couldn't deliver that -- they may have DMs disabled.*"));
+      await interaction.editReply(formatMessage(asker.id, question, "*Couldn't deliver that -- they may have DMs disabled.*"));
       return;
     }
 
@@ -103,7 +101,7 @@ client.on('interactionCreate', async (interaction) => {
       interaction,
     });
   } catch (err) {
-    console.error('Error handling /ask interaction:', err);
+    console.error('Error handling /wubble interaction:', err);
     try {
       if (interaction.replied || interaction.deferred) {
         await interaction.editReply('Something went wrong handling that, sorry.');
@@ -120,8 +118,6 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
   const referencedId = message.reference?.messageId ?? null;
-  // Only act on genuine Discord replies -- ignore everything else so
-  // ordinary chatter (in a server or in DMs) is left alone.
   if (!referencedId) return;
 
   const record = takePendingForDirectReply(message.author.id, referencedId);
@@ -145,15 +141,13 @@ client.on('messageCreate', async (message) => {
   }
 
   const payload = {
-    content: formatMessage(record.question, answer || '*(sent a file)*'),
+    content: formatMessage(record.askerId, record.question, answer || '*(sent a file)*'),
     files: files.length ? files : undefined,
   };
 
   try {
-    // Fills in the asker's status message with the real answer, in place.
     await record.interaction.editReply(payload);
   } catch (err) {
-    // Interaction token expired (>~15 min) -- fall back to a direct DM.
     try {
       const asker = await client.users.fetch(record.askerId);
       const dm = await asker.createDM();
