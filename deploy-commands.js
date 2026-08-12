@@ -6,7 +6,7 @@ const commands = [
     .setName('wubble')
     .setDescription('Ask WubbleGPT')
     .addStringOption((option) =>
-      option.setName('something').setDescription('The message to send').setRequired(true)
+      option.setName('something').setDescription('What to ask').setRequired(true)
     )
     .setDMPermission(true)
     .toJSON(),
